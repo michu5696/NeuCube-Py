@@ -3,8 +3,8 @@ import h5py
 import pandas as pd
 import scipy.interpolate as interp
 from scipy.signal import find_peaks
+from scipy.signal import butter, filtfilt
 import os
-import torch
 
 
 def resample_data(times, data, target_rate):
@@ -21,9 +21,36 @@ def calculate_moving_average(data, window_size):
     return np.convolve(data, weights, mode='valid')
 
 
+def butter_lowpass_filter(data, cutoff, fs, order=5):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    y = filtfilt(b, a, data, method="pad", padlen=500)
+    return y
+
+
+def rate_encoding(signal, time_batch, min_val, max_val):
+    # Normalize the signal
+    normalized_signal = (signal - min_val) / (max_val - min_val)
+    # Ensure no negative rates by clipping values
+    normalized_signal = np.clip(normalized_signal, 0, 1)
+    # Calculate the rate
+    rate = normalized_signal * 100  # Example rate scaling factor
+    spikes = []
+    # max_spikes_per_interval = 10  # Set a limit on the number of spikes per interval
+    for i in range(1, len(time_batch)):
+        # Distribute spikes randomly within the current interval
+        # num_spikes = min(int(rate[i]), max_spikes_per_interval)
+        num_spikes = int(rate[i])
+        if num_spikes > 0:
+            spike_times = np.random.uniform(time_batch[i - 1], time_batch[i], num_spikes)
+            spikes.extend(spike_times)
+    print(len(spikes))
+    return sorted(spikes)
+
 
 def magnitude_to_class(magnitude):
-    if magnitude <= 0.1:
+    if magnitude <= 0.2:
         return 0
     elif magnitude <= 0.2:
         return 1
@@ -44,6 +71,9 @@ class DataManager:
         self.batches = {}  # List to hold data batches
         self.events = {}  # Dictionary to hold detected events for each PZ channel
         self.gt_classes = {}
+        self.encoded_spikes = {}
+        self.current_min = {}  # To store minimum derivatives for each channel and system_id
+        self.current_max = {}  # To store maximum derivatives for each channel and system_id
 
     def fetch_data(self, chunk_id):
         # Load data for both system 1 and 2
@@ -101,6 +131,38 @@ class DataManager:
             # Check if any batches were created for the current system
             if not self.batches[system_id]:
                 print(f"Warning: No valid batches created for system {system_id}")
+
+    def process_and_save_batches(self):
+        chunk_ids = range(1, 12)
+
+        batch_counter = 1
+        for chunk_id in chunk_ids:
+            if not self.fetch_data(chunk_id):
+                print(f"Failed to load data for chunk {chunk_id}. Skipping.")
+                continue
+
+            self.split_into_batches()
+            for system_id, batch_list in self.batches.items():
+                for batch in batch_list:
+                    time_batch, data_batch = batch
+
+                    # Exclude specified channels for system_id 2
+                    if system_id == 2:
+                        data_batch = np.delete(data_batch, [12, 13, 14, 15],
+                                               axis=0)  # Adjusting indices to Python's 0-based indexing
+
+                    # Prepare DataFrame for CSV
+                    df = pd.DataFrame(data_batch.transpose(),
+                                      columns=[f'Channel_{i + 1}' for i in range(data_batch.shape[0])])
+                    df.insert(0, 'Time', time_batch)  # Insert time column at the beginning
+
+                    # Save to CSV
+                    csv_path = os.path.join(self.samples_path, f'sample_{batch_counter}.csv')
+                    df.to_csv(csv_path, index=False)
+                    print(f"Batch {batch_counter} saved to {csv_path}")
+                    batch_counter += 1
+
+        print(f"All batches processed and saved. Total batches: {batch_counter - 1}")
 
 
     def identify_events(self, height_threshold, distance_between_events):
@@ -164,57 +226,3 @@ class DataManager:
                 batch_gt.append(magnitude_class)
 
             self.gt_classes[batch_index] = batch_gt
-
-
-    def process_data(self):
-        all_labels = []  # List to store all labels across batches and chunks
-        batch_counter = 1  # To track batches for sample file naming
-        subsampling_rate = 100  # Adjust this value based on your requirements
-    
-        # Start from chunk_id 2 as per the requirement
-        for chunk_id in range(2, 12):  # Assuming chunks 2 to 11
-            if not self.fetch_data(chunk_id):
-                print(f"Failed to load data for chunk {chunk_id}. Skipping.")
-                continue
-    
-            self.split_into_batches()
-            self.identify_events(height_threshold=0.001, distance_between_events=1000)  # Example values
-            self.generate_gt_classes()
-    
-            # Process each batch for both System 1 (9 channels) and System 2 (16 channels)
-            num_channels_system1 = 9
-            num_channels_system2 = 16
-    
-            for batch_index in range(len(self.batches[1]) - 1):  # Assuming system 1 and system 2 have the same number of batches
-                # Get data for both systems
-                _, data_batch_system1 = self.batches[1][batch_index]
-                _, data_batch_system2 = self.batches[2][batch_index]
-    
-                # Subsample the data for both systems
-                subsampled_data_batch_system1 = data_batch_system1[:num_channels_system1, ::subsampling_rate]  # System 1
-                subsampled_data_batch_system2 = data_batch_system2[:num_channels_system2, ::subsampling_rate]  # System 2
-    
-                # Convert the subsampled data from NumPy to PyTorch tensors
-                subsampled_data_batch_system1_tensor = torch.tensor(subsampled_data_batch_system1)
-                subsampled_data_batch_system2_tensor = torch.tensor(subsampled_data_batch_system2)
-    
-                # Concatenate the subsampled data from both systems (vertically stack them)
-                combined_data_batch = torch.cat((subsampled_data_batch_system1_tensor, subsampled_data_batch_system2_tensor), dim=0)
-    
-                # Transpose the data to swap dimensions: (channels, time) -> (time, channels)
-                combined_data_batch = combined_data_batch.transpose(0, 1)
-    
-                # Create a DataFrame and save the combined batch to a CSV file
-                df_sample = pd.DataFrame(combined_data_batch.numpy(), 
-                                         columns=[f'Channel_{i+1}' for i in range(combined_data_batch.shape[1])])
-                sample_csv_path = os.path.join(self.samples_path, f'sample_{batch_counter}.csv')
-                df_sample.to_csv(sample_csv_path, index=False)
-                print(f"Batch {batch_counter} from both systems saved to {sample_csv_path}")
-                batch_counter += 1
-    
-                # Collect labels for each batch (if you have labels for both systems, update this accordingly)
-                labels = self.gt_classes.get(batch_index, [0, 0, 0, 0])  # Default to [0, 0, 0, 0] if no data
-                all_labels.append(labels)
-
-
-
