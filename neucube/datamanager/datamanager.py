@@ -23,14 +23,14 @@ def calculate_moving_average(data, window_size):
 
 
 def magnitude_to_class(magnitude):
-    if magnitude <= 0.1:
+    if magnitude <= 0.04:
         return 0
-    elif magnitude <= 0.2:
-        return 1
-    elif magnitude <= 0.3:
-        return 2
+    #elif magnitude <= 0.2:
+    #    return 1
+    #elif magnitude <= 0.3:
+    #    return 2
     else:
-        return 3
+        return 1
 
 
 class DataManager:
@@ -215,6 +215,12 @@ class DataManager:
                 # Collect labels for each batch (if you have labels for both systems, update this accordingly)
                 labels = self.gt_classes.get(batch_index, [0, 0, 0, 0])  # Default to [0, 0, 0, 0] if no data
                 all_labels.append(labels)
+                
+        # Save all labels to a single CSV file
+        df_labels = pd.DataFrame(all_labels, columns=['Zone1', 'Zone2', 'Zone3', 'Zone4'])
+        labels_csv_path = os.path.join(self.samples_path, 'all_class_labels.csv')
+        df_labels.to_csv(labels_csv_path, index=False)
+        print(f"All ground truth labels saved to {labels_csv_path}")
 
 
 

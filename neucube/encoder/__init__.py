@@ -1,1 +1,1 @@
-from .encoder import RateEncoder
+from .encoder import RateEncoder, Delta
