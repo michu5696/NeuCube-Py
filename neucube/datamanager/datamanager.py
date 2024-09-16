@@ -23,7 +23,7 @@ def calculate_moving_average(data, window_size):
 
 
 def magnitude_to_class(magnitude):
-    if magnitude <= 0.04:
+    if magnitude <= 0.2:
         return 0
     #elif magnitude <= 0.2:
     #    return 1

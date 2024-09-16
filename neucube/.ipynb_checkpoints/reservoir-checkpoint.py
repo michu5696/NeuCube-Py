@@ -5,7 +5,7 @@ from .topology import small_world_connectivity
 from .utils import print_summary
 
 class Reservoir():
-  def __init__(self, cube_shape=(6,6,6), inputs=None, coordinates=None, mapping=None, c=1.2, l=1.6, c_in = 0.9, l_in = 1.2):
+  def __init__(self, cube_shape=(10,10,10), inputs=None, coordinates=None, mapping=None, c=1.2, l=1.6, c_in = 0.9, l_in = 1.2):
     """
     Initializes the reservoir object.
 
